@@ -213,32 +213,22 @@ def pacmanSuccessorAxiomSingle(x: int, y: int, time: int, walls_grid: List[List[
     false_causes: List[Expr] = []
     # the if statements give a small performance boost and are required for q4 and q5 correctness
     if walls_grid[x][y+1] != 1:
-        #false_causes.append(PropSymbolExpr('South', time=last))
-        possible_causes.append(PropSymbolExpr("Pa", x, y+1, time=last)
+        possible_causes.append(PropSymbolExpr("P", x, y+1, time=last)
                             & PropSymbolExpr('South', time=last))
     if walls_grid[x][y-1] != 1:
-        #false_causes.append(PropSymbolExpr('North', time=last))
-        possible_causes.append(PropSymbolExpr("Pa", x, y-1, time=last) 
+        possible_causes.append(PropSymbolExpr("P", x, y-1, time=last) 
                             & PropSymbolExpr('North', time=last))
     if walls_grid[x+1][y] != 1:
-        #false_causes.append(PropSymbolExpr('West', time=last))
-        possible_causes.append(PropSymbolExpr("Pa", x+1, y, time=last) 
+        possible_causes.append(PropSymbolExpr("P", x+1, y, time=last) 
                             & PropSymbolExpr('West', time=last))
     if walls_grid[x-1][y] != 1:
-        #false_causes.append(PropSymbolExpr('East', time=last))
-        possible_causes.append(PropSymbolExpr("Pa", x-1, y, time=last) 
+        possible_causes.append(PropSymbolExpr("P", x-1, y, time=last) 
                             & PropSymbolExpr('East', time=last))
     if not possible_causes:
         return None
     
     "*** BEGIN YOUR CODE HERE ***"
-    """
-    possible_causes_sent: Expr = conjoin([~PropSymbolExpr("Pa", x, y, time=last) , ~PropSymbolExpr(wall_str, x, y), disjoin(possible_causes)])
-    false_clauses_sent: Expr = conjoin([PropSymbolExpr("Pa", x, y, time=last), ~conjoin([~PropSymbolExpr(wall_str, x, y), disjoin(false_causes)]) ])
-
-    return conjoin([PropSymbolExpr(pacman_str, x, y, time=now) % disjoin([possible_causes_sent, false_clauses_sent])])
-    """
-    return disjoin(possible_causes) % PropSymbolExpr(pacman_str, x, y, time=now)
+    return PropSymbolExpr(pacman_str, x, y, time=now) % disjoin(possible_causes)
     "*** END YOUR CODE HERE ***"
 
 
@@ -309,15 +299,16 @@ def pacphysicsAxioms(t: int, all_coords: List[Tuple], non_outer_wall_coords: Lis
     pacphysics_sentences = []
 
     "*** BEGIN YOUR CODE HERE ***"
-    for (x,y) in all_coords:
-        if walls_grid[x][y] == 1:
-            pacphysics_sentences.append(~PropSymbolExpr("P", x, y, time = t))
-    pacphysics_sentences.append(exactlyOne([PropSymbolExpr("P", x, y, time = t) for (x,y) in non_outer_wall_coords]))
-    pacphysics_sentences.append(exactlyOne([PropSymbolExpr('South', time=t), PropSymbolExpr('North', time=t), 
-        PropSymbolExpr('East', time=t), PropSymbolExpr('West', time=t)]))
-    if sensorAxioms(t, non_outer_wall_coords) != None:
-        pacphysics_sentences.append(sensorAxioms(t, non_outer_wall_coords))
-    pacphysics_sentences.append(successorAxioms(t, walls_grid, non_outer_wall_coords))
+    for x,y in all_coords:
+        pacphysics_sentences.append(PropSymbolExpr(wall_str, x, y)>> ~PropSymbolExpr(pacman_str, x, y, time=t))
+        #if walls_grid[x][y] == 1:
+            #pacphysics_sentences.append(~PropSymbolExpr("P", x, y, time = t))
+    pacphysics_sentences.append(exactlyOne([PropSymbolExpr("P", x, y, time = t) for x,y in non_outer_wall_coords]))
+    pacphysics_sentences.append(exactlyOne([PropSymbolExpr(d, time=t) for d in DIRECTIONS]))
+    if sensorModel:
+        pacphysics_sentences.append(sensorModel(t, non_outer_wall_coords))
+    if successorAxioms and t != 0:
+        pacphysics_sentences.append(successorAxioms(t, walls_grid, non_outer_wall_coords))
     "*** END YOUR CODE HERE ***"
 
     return conjoin(pacphysics_sentences)
@@ -351,11 +342,16 @@ def checkLocationSatisfiability(x1_y1: Tuple[int, int], x0_y0: Tuple[int, int], 
     KB.append(conjoin(map_sent))
 
     "*** BEGIN YOUR CODE HERE ***"
-    KB.append(pacphysicsAxioms(1, all_coords, non_outer_wall_coords, walls_grid, None, allLegalSuccessorAxioms))
-    KB.append(PropSymbolExpr("P", x0, y0, time=0))
-    KB.append(PropSymbolExpr(action0, time=1))
+
+    KB.append(pacphysicsAxioms(0, all_coords, non_outer_wall_coords))
+    KB.append(pacphysicsAxioms(1, all_coords, non_outer_wall_coords))
+    KB.append(PropSymbolExpr(pacman_str, x0, y0, time=0))
+    KB.append(PropSymbolExpr(action0, time=0))
     KB.append(PropSymbolExpr(action1, time=1))
-    return (findModel(PropSymbolExpr("P", x1, y1, time=1)), findModel(~PropSymbolExpr("P", x1, y1, time=1)))
+    KB.append(allLegalSuccessorAxioms(1, walls_grid, non_outer_wall_coords))
+    model_1 = findModel(conjoin(KB + [PropSymbolExpr(pacman_str, x1, y1, time=1)]))
+    model_2 = findModel(conjoin(KB + [~PropSymbolExpr(pacman_str, x1, y1, time=1)]))
+    return model_1, model_2
     
     "*** END YOUR CODE HERE ***"
 
@@ -383,7 +379,29 @@ def positionLogicPlan(problem) -> List:
     KB = []
 
     "*** BEGIN YOUR CODE HERE ***"
-    util.raiseNotDefined()
+    
+    #Add to KB: Initial knowledge: Pacman’s initial location at timestep 0
+    KB.append(PropSymbolExpr(pacman_str, x0, y0, time = 0))
+    #for t in range(50) (because Autograder will not test on layouts requiring ≥50 timesteps)
+    for t in range(50):
+        #Print time step; this is to see that the code is running and how far it is.
+        print(t)
+        #Add to KB: Initial knowledge: Pacman can only be at exactlyOne of the locations in non_wall_coords at timestep t.
+        KB.append(exactlyOne([PropSymbolExpr(pacman_str, x, y, time = t) for x, y in  non_wall_coords]))
+        #Is there a satisfying assignment for the variables given the knowledge base so far? 
+        #Use findModel and pass in the Goal Assertion and KB.
+        model = findModel(conjoin(KB + [PropSymbolExpr(pacman_str, xg, yg, time = t)]))
+        #If there is, return a sequence of actions from start to goal using extractActionSequence.
+        if model != False:
+            return extractActionSequence(model,  actions)
+        #Add to KB: Pacman takes exactly one action per timestep.
+        KB.append(exactlyOne([PropSymbolExpr(d, time=t) for d in actions]))
+        #Add to KB: Transition Model sentences: call pacmanSuccessorAxiomSingle(...) for all possible pacman positions in non_wall_coords.
+        for x, y, in non_wall_coords:
+            KB.append(pacmanSuccessorAxiomSingle(x, y, t+1, walls_grid))
+            
+
+
     "*** END YOUR CODE HERE ***"
 
 #______________________________________________________________________________
@@ -412,7 +430,35 @@ def foodLogicPlan(problem) -> List:
     KB = []
 
     "*** BEGIN YOUR CODE HERE ***"
-    util.raiseNotDefined()
+    #Add to KB: Initial knowledge: Pacman’s initial location at timestep 0
+    KB.append(PropSymbolExpr(pacman_str, x0, y0, time = 0))
+    #for t in range(50) (because Autograder will not test on layouts requiring ≥50 timesteps)
+    for t in range(50):
+        #Print time step; this is to see that the code is running and how far it is.
+        print(t)
+        food_list = []
+        print(food)
+        for x, y in non_wall_coords:
+            if (x, y) in food:
+                KB.append(PropSymbolExpr(food_str, x, y, time=t))
+            else:
+                KB.append(~PropSymbolExpr(food_str, x, y, time=t))
+            #goal: all food expr are false
+            food_list.append(~PropSymbolExpr(food_str, x, y, time=t))
+        #Add to KB: Initial knowledge: Pacman can only be at exactlyOne of the locations in non_wall_coords at timestep t.
+        KB.append(exactlyOne([PropSymbolExpr(pacman_str, x, y, time = t) for x, y in  non_wall_coords]))
+        #Is there a satisfying assignment for the variables given the knowledge base so far? 
+        #Use findModel and pass in the Goal Assertion and KB.
+        model = findModel(conjoin(KB + food_list))
+        #If there is, return a sequence of actions from start to goal using extractActionSequence.
+        if model != False:
+            return extractActionSequence(model,  actions)
+        #Add to KB: Pacman takes exactly one action per timestep.
+        KB.append(exactlyOne([PropSymbolExpr(d, time=t) for d in actions]))
+        #Add to KB: Transition Model sentences: call pacmanSuccessorAxiomSingle(...) for all possible pacman positions in non_wall_coords.
+        for x, y, in non_wall_coords:
+            KB.append(PropSymbolExpr(food_str, x, y, time=t+1) % conjoin(PropSymbolExpr(food_str, x, y, time=t+1), ~PropSymbolExpr(pacman_str, x, y, time = t)))
+            #KB.append(pacmanSuccessorAxiomSingle(x, y, t+1, walls_grid))
     "*** END YOUR CODE HERE ***"
 
 #______________________________________________________________________________
@@ -703,3 +749,4 @@ class PlanningProblem:
         a unique goal state such as PositionPlanningProblem
         """
         util.raiseNotDefined()
+        
